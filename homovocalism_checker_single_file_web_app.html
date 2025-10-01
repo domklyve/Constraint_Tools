@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Homovocalism Checker</title>
+  <style>
+    :root { --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --bad:#ef4444; --card:#0b1220; }
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Noto Sans",sans-serif}
+    header{padding:20px 16px;text-align:center}
+    header h1{margin:0 0 6px 0;font-size:24px}
+    header p{margin:0;color:var(--muted)}
+    main{max-width:980px;margin:0 auto;padding:12px 16px 40px}
+    .grid{display:grid;gap:16px;grid-template-columns:1fr}
+    @media (min-width: 900px){ .grid{grid-template-columns:1fr 1fr} }
+    .card{background:rgba(255,255,255,0.04);border:1px solid rgba(148,163,184,0.2);border-radius:14px;padding:14px}
+    .card h2{margin:0 0 10px;font-size:16px;color:#cbd5e1}
+    textarea{width:100%;min-height:150px;background:#0b1220;border:1px solid rgba(148,163,184,0.25);color:var(--text);border-radius:10px;padding:10px}
+    .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:12px 0}
+    label{display:flex;gap:8px;align-items:center;color:#cbd5e1}
+    input[type="checkbox"]{transform:scale(1.1)}
+    button{background:#2563eb;border:none;color:white;padding:10px 14px;border-radius:10px;cursor:pointer}
+    button.secondary{background:#334155}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .out{background:rgba(255,255,255,0.04);border:1px solid rgba(148,163,184,0.2);border-radius:14px;padding:14px}
+    .row{margin:10px 0}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+    .good{color:var(--accent);font-weight:700}
+    .bad{color:var(--bad);font-weight:700}
+    .seq{padding:8px 10px;border-radius:8px;background:#0b1220;border:1px dashed rgba(148,163,184,0.35)}
+    .hl span.v{font-weight:700;color:#f59e0b}
+    .footer{margin-top:24px;color:var(--muted);font-size:14px}
+    details{margin-top:8px}
+    .pill{display:inline-block;border:1px solid rgba(148,163,184,0.3);border-radius:999px;padding:4px 10px;margin:4px 6px;color:#cbd5e1;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Homovocalism Checker</h1>
+    <p>Preserve the <em>vowel sequence</em> of a source text while changing consonants. Bold vowels are highlighted below for easy comparison.</p>
+  </header>
+  <main>
+    <section class="grid">
+      <div class="card">
+        <h2>Source Text</h2>
+        <textarea id="src" placeholder="Type or paste the source text here…">To be or not to be</textarea>
+        <div class="controls">
+          <label><input type="checkbox" id="yVowel"> Treat “Y/y” as vowel</label>
+          <label><input type="checkbox" id="strip" checked> Strip accents / ligatures (é→e, œ→oe)</label>
+        </div>
+        <div class="controls">
+          <button id="check">Check homovocalism</button>
+          <button id="swap" class="secondary" title="Swap source and candidate">Swap</button>
+          <button id="clear" class="secondary">Clear</button>
+        </div>
+        <details>
+          <summary>Examples</summary>
+          <div>
+            <span class="pill" data-src="To be or not to be" data-cand="One to two cones">“To be or not to be” → “One to two cones”</span>
+            <span class="pill" data-src="Shall I compare thee to a summer’s day?" data-cand="Grand ink, formal verse: oh, a subtle play!">Shakespeare riff</span>
+            <span class="pill" data-src="Time flies like an arrow" data-cand="Sip red ink at Alamo">Time/Arrow riff</span>
+          </div>
+        </details>
+      </div>
+      <div class="card">
+        <h2>Candidate Text</h2>
+        <textarea id="cand" placeholder="Type or paste the candidate text here…">One to two cones</textarea>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <h2>Result</h2>
+      <div id="result" class="out">
+        <div class="row"><strong>Status:</strong> <span id="status" class="bad">Waiting…</span></div>
+        <div class="row"><strong>Source (vowels bold):</strong><div id="srcHL" class="hl"></div></div>
+        <div class="row"><strong>Candidate (vowels bold):</strong><div id="candHL" class="hl"></div></div>
+        <div class="row"><strong>Vowel sequence (source):</strong><div id="srcSeq" class="seq mono"></div></div>
+        <div class="row"><strong>Vowel sequence (candidate):</strong><div id="candSeq" class="seq mono"></div></div>
+      </div>
+      <div class="footer">Tip: homovocalism compares only vowels (optionally including <em>y</em>) and ignores punctuation and case. Accents are normalized if enabled.</div>
+    </section>
+  </main>
+
+  <script>
+    // Utility: normalize accents and common ligatures
+    function stripAccents(str){
+      return str
+        .replaceAll(/Æ/g,"AE").replaceAll(/æ/g,"ae")
+        .replaceAll(/Œ/g,"OE").replaceAll(/œ/g,"oe")
+        .normalize("NFKD").replace(/[\u0300-\u036f]/g,"");
+    }
+
+    function isVowel(ch, vowels){
+      return vowels.indexOf(ch.toLowerCase()) !== -1;
+    }
+
+    function extractVowelSeq(text, {yVowel=false, strip=true}={}){
+      const vowels = (yVowel? "aeiouy" : "aeiou");
+      const s = strip ? stripAccents(text) : text;
+      const seq = [];
+      for(const ch of s){
+        if(isVowel(ch, vowels)) seq.push(ch.toLowerCase());
+      }
+      return seq;
+    }
+
+    function boldVowelsHTML(text, {yVowel=false, strip=true}={}){
+      const vowels = (yVowel? "aeiouy" : "aeiou");
+      const display = text.split("");
+      const checkStr = strip ? stripAccents(text) : text;
+      const out = [];
+      for(let i=0;i<display.length;i++){
+        const dispCh = display[i];
+        const chkCh = checkStr[i] || "";
+        if(isVowel(chkCh, vowels)){
+          out.push('<span class="v">'+escapeHtml(dispCh)+'</span>');
+        } else {
+          out.push(escapeHtml(dispCh));
+        }
+      }
+      return out.join("");
+    }
+
+    function escapeHtml(str){
+      return str
+        .replaceAll(/&/g,"&amp;")
+        .replaceAll(/</g,"&lt;")
+        .replaceAll(/>/g,"&gt;")
+        .replaceAll(/\"/g,"&quot;")
+        .replaceAll(/'/g,"&#39;");
+    }
+
+    function prettySeq(seq){
+      return seq.length ? seq.join(" ") : "∅";
+    }
+
+    function check(){
+      const src = document.getElementById('src').value;
+      const cand = document.getElementById('cand').value;
+      const yVowel = document.getElementById('yVowel').checked;
+      const strip = document.getElementById('strip').checked;
+
+      const sSeq = extractVowelSeq(src, {yVowel, strip});
+      const cSeq = extractVowelSeq(cand, {yVowel, strip});
+
+      const statusEl = document.getElementById('status');
+      const srcHL = document.getElementById('srcHL');
+      const candHL = document.getElementById('candHL');
+      const srcSeq = document.getElementById('srcSeq');
+      const candSeq = document.getElementById('candSeq');
+
+      srcHL.innerHTML = boldVowelsHTML(src, {yVowel, strip});
+      candHL.innerHTML = boldVowelsHTML(cand, {yVowel, strip});
+      srcSeq.textContent = prettySeq(sSeq);
+      candSeq.textContent = prettySeq(cSeq);
+
+      const match = sSeq.length && (sSeq.join("|") === cSeq.join("|"));
+      statusEl.textContent = match ? '✅ MATCH (homovocalism satisfied)' : '❌ MISMATCH (vowel sequences differ)';
+      statusEl.className = match ? 'good' : 'bad';
+    }
+
+    // Wire up UI
+    document.getElementById('check').addEventListener('click', check);
+    document.getElementById('swap').addEventListener('click', () => {
+      const a = document.getElementById('src');
+      const b = document.getElementById('cand');
+      const tmp = a.value; a.value = b.value; b.value = tmp; check();
+    });
+    document.getElementById('clear').addEventListener('click', () => {
+      document.getElementById('src').value = '';
+      document.getElementById('cand').value = '';
+      check();
+    });
+
+    // Example pills
+    for(const pill of document.querySelectorAll('.pill')){
+      pill.addEventListener('click', () => {
+        document.getElementById('src').value = pill.getAttribute('data-src');
+        document.getElementById('cand').value = pill.getAttribute('data-cand');
+        check();
+      });
+    }
+
+    // Auto-check on input
+    for(const id of ['src','cand','yVowel','strip']){
+      document.getElementById(id).addEventListener('input', check);
+      document.getElementById(id).addEventListener('change', check);
+    }
+
+    // Initial check
+    check();
+  </script>
+</body>
+</html>

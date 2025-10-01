@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pilish Checker</title>
+  <style>
+    :root { --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --text:#e5e7eb; --accent:#22c55e; --bad:#ef4444; --card:#0b1220; }
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Noto Sans",sans-serif}
+    header{padding:20px 16px;text-align:center}
+    header h1{margin:0 0 6px 0;font-size:24px}
+    header p{margin:0;color:var(--muted)}
+    main{max-width:1100px;margin:0 auto;padding:12px 16px 40px}
+    .grid{display:grid;gap:16px;grid-template-columns:1fr}
+    @media (min-width: 980px){ .grid{grid-template-columns:1fr 1fr} }
+    .card{background:rgba(255,255,255,0.04);border:1px solid rgba(148,163,184,0.2);border-radius:14px;padding:14px}
+    .card h2{margin:0 0 10px;font-size:16px;color:#cbd5e1}
+    textarea{width:100%;min-height:220px;background:#0b1220;border:1px solid rgba(148,163,184,0.25);color:var(--text);border-radius:10px;padding:10px}
+    .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:12px 0}
+    label{display:flex;gap:8px;align-items:center;color:#cbd5e1}
+    input[type="checkbox"], input[type="radio"]{transform:scale(1.05)}
+    input[type="number"]{width:90px;padding:6px 8px;border-radius:8px;border:1px solid rgba(148,163,184,0.3);background:#0b1220;color:var(--text)}
+    button{background:#2563eb;border:none;color:white;padding:10px 14px;border-radius:10px;cursor:pointer}
+    button.secondary{background:#334155}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .out{background:rgba(255,255,255,0.04);border:1px solid rgba(148,163,184,0.2);border-radius:14px;padding:14px}
+    .row{margin:10px 0}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+    .good{color:var(--accent);font-weight:700}
+    .bad{color:var(--bad);font-weight:700}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th, td{padding:8px 10px;border-bottom:1px solid rgba(148,163,184,0.2);text-align:left}
+    tr.badrow{background:rgba(239,68,68,0.08)}
+    tr.goodrow{background:rgba(34,197,94,0.06)}
+    .pill{display:inline-block;border:1px solid rgba(148,163,184,0.3);border-radius:999px;padding:4px 10px;margin:4px 6px;color:#cbd5e1;cursor:pointer}
+    .footer{margin-top:24px;color:var(--muted);font-size:14px}
+    .seq{padding:8px 10px;border-radius:8px;background:#0b1220;border:1px dashed rgba(148,163,184,0.35)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Pilish Checker</h1>
+    <p>Check that each word length follows the digits of π. Letters are counted; punctuation/spaces are ignored. 0 → 10 letters (configurable).</p>
+  </header>
+  <main>
+    <section class="grid">
+      <div class="card">
+        <h2>Text to Check</h2>
+        <textarea id="text" placeholder="Paste your Pilish text here…">Now I wish a ratio sublime describing reality</textarea>
+        <div class="controls">
+          <label><input type="checkbox" id="zeroTen" checked> Treat digit 0 as 10 letters</label>
+          <label><input type="checkbox" id="strip" checked> Strip accents / ligatures (é→e, œ→oe)</label>
+        </div>
+        <div class="controls">
+          <label><input type="radio" name="digitsMode" value="auto" checked> Use as many digits as words</label>
+          <label><input type="radio" name="digitsMode" value="fixed"> Use first <input type="number" id="nDigits" min="1" value="20"> digits</label>
+        </div>
+        <div class="controls">
+          <button id="check">Check Pilish</button>
+          <button id="clear" class="secondary">Clear</button>
+          <span id="summary" style="margin-left:auto;font-weight:700"></span>
+        </div>
+        <details>
+          <summary>Examples</summary>
+          <div>
+            <span class="pill" data-text="Now I wish a number eternal, precisely revealing cosmic mysteries">Short example</span>
+            <span class="pill" data-text="Now I wish a ratio sublime, describing reality, infinite, vast">Another example</span>
+          </div>
+        </details>
+      </div>
+      <div class="card">
+        <h2>Settings & Digit Sequence</h2>
+        <div class="row"><strong>Digits in use:</strong>
+          <div id="digits" class="seq mono"></div>
+        </div>
+        <div class="row"><strong>Words detected:</strong> <span id="wordCount">0</span></div>
+        <div class="row"><strong>Letters-only text:</strong>
+          <div id="lettersOnly" class="seq mono"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <h2>Word-by-Word Check</h2>
+      <div id="tableWrap" class="out">
+        <table id="reportTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Raw word</th>
+              <th>Letters only</th>
+              <th>Len</th>
+              <th>Expected</th>
+              <th>OK</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="footer">Note: counting uses Unicode letters (\p{L}); accents can be stripped for fairness. Hyphens/apostrophes are ignored.</div>
+    </section>
+  </main>
+
+  <script>
+    // First ~220 digits of pi after the decimal (no decimal point)
+    const PI_DIGITS = (
+      "3141592653589793238462643383279502884197169399375105820974944592"+
+      "3078164062862089986280348253421170679821480865132823066470938446"+
+      "0955058223172535940812848111745028410270193852110555964462294895"
+    );
+
+    function stripAccents(str){
+      return str
+        .replaceAll(/Æ/g,"AE").replaceAll(/æ/g,"ae")
+        .replaceAll(/Œ/g,"OE").replaceAll(/œ/g,"oe")
+        .normalize("NFKD").replace(/[\u0300-\u036f]/g,"");
+    }
+
+    // Return array of raw words split on whitespace
+    function tokenize(text){
+      // Split on any whitespace; keep multi-line poems fine
+      return text.trim().split(/\s+/).filter(Boolean);
+    }
+
+    // Keep letters only (Unicode letters) using property escapes
+    function lettersOnly(word, strip=true){
+      const s = strip ? stripAccents(word) : word;
+      const m = s.match(/\p{L}+/gu); // one or more letters chunks
+      return m ? m.join("") : "";
+    }
+
+    function expectedLengths(n, zeroAsTen){
+      if(n > PI_DIGITS.length) throw new Error(`Need ${n} digits but only have ${PI_DIGITS.length} loaded.`);
+      const out = [];
+      for(let i=0;i<n;i++){
+        const d = PI_DIGITS[i];
+        if(d === '0') out.push(zeroAsTen ? 10 : 0);
+        else out.push(parseInt(d,10));
+      }
+      return out;
+    }
+
+    function compute(){
+      const text = document.getElementById('text').value;
+      const zeroAsTen = document.getElementById('zeroTen').checked;
+      const strip = document.getElementById('strip').checked;
+      const mode = document.querySelector('input[name="digitsMode"]:checked').value;
+      const nDigitsInput = document.getElementById('nDigits');
+
+      const words = tokenize(text);
+      const cleaned = words.map(w => lettersOnly(w, strip));
+      const lens = cleaned.map(s => s.length);
+
+      const n = (mode === 'auto') ? words.length : Math.min(parseInt(nDigitsInput.value||'0',10), PI_DIGITS.length);
+      const exp = expectedLengths(n, zeroAsTen);
+
+      // Build table
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = '';
+      let allOk = true;
+      for(let i=0;i<n;i++){
+        const raw = words[i] ?? '';
+        const clean = cleaned[i] ?? '';
+        const got = lens[i] ?? 0;
+        const expected = exp[i];
+        const ok = (got === expected);
+        allOk = allOk && ok;
+        const tr = document.createElement('tr');
+        tr.className = ok ? 'goodrow' : 'badrow';
+        tr.innerHTML = `<td>${i+1}</td><td>${escapeHtml(raw)}</td><td class="mono">${escapeHtml(clean)}</td><td>${got}</td><td>${expected}</td><td>${ok? '✓' : '✗'}</td>`;
+        tbody.appendChild(tr);
+      }
+
+      // Digits display and summary
+      const digitsStr = exp.join(' ');
+      document.getElementById('digits').textContent = digitsStr;
+      document.getElementById('wordCount').textContent = words.length;
+      document.getElementById('lettersOnly').textContent = cleaned.join(' ');
+
+      const summary = document.getElementById('summary');
+      if(n===0){
+        summary.textContent = '';
+      } else if(words.length < n){
+        summary.textContent = `Need ${n} words for ${n} digits (you provided ${words.length}).`;
+        summary.className = 'bad';
+      } else if(words.length > n && mode === 'fixed'){
+        summary.textContent = `Using first ${n} digits only; extra words ignored.`;
+        summary.className = '';
+      } else {
+        summary.textContent = allOk ? 'PERFECT PILISH ✅' : 'Not Pilish (yet) ❌';
+        summary.className = allOk ? 'good' : 'bad';
+      }
+    }
+
+    function escapeHtml(str){
+      return String(str)
+        .replaceAll(/&/g,"&amp;")
+        .replaceAll(/</g,"&lt;")
+        .replaceAll(/>/g,"&gt;")
+        .replaceAll(/\"/g,"&quot;")
+        .replaceAll(/'/g,"&#39;");
+    }
+
+    // Wire up
+    document.getElementById('check').addEventListener('click', compute);
+    document.getElementById('clear').addEventListener('click', () => {
+      document.getElementById('text').value = '';
+      document.getElementById('summary').textContent = '';
+      compute();
+    });
+    document.getElementById('zeroTen').addEventListener('change', compute);
+    document.getElementById('strip').addEventListener('change', compute);
+    document.getElementById('nDigits').addEventListener('input', compute);
+    for(const el of document.querySelectorAll('input[name="digitsMode"]')){
+      el.addEventListener('change', compute);
+    }
+    for(const pill of document.querySelectorAll('.pill')){
+      pill.addEventListener('click', () => {
+        document.getElementById('text').value = pill.getAttribute('data-text');
+        compute();
+      });
+    }
+    document.getElementById('text').addEventListener('input', compute);
+
+    // Initial compute
+    compute();
+  </script>
+</body>
+</html>
